@@ -84,6 +84,7 @@ class Database:
             DataFrame representation of the site_visits table for successfully crawled sites.
         """
 
+        """
         df_successful_sites = pd.read_sql_query(
             "SELECT visit_id from crawl_history where "
             "command = 'GetCommand' and command_status = 'ok'",
@@ -94,5 +95,13 @@ class Database:
 
         return pd.read_sql_query(
             f"SELECT visit_id, site_url from site_visits where visit_id in ({','.join([str(x) for x in tuple(successful_vids)])})",
+            self.conn
+        )
+        """
+
+        return pd.read_sql_query(
+            """SELECT visit_id, site_url from site_visits where visit_id in (
+    SELECT visit_id from crawl_history where command = 'GetCommand' and command_status = 'ok'
+    );""",
             self.conn
         )

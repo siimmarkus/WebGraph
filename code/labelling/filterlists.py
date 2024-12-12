@@ -13,7 +13,7 @@ ADBLOCK_LISTS = {
     'fanboyannoyance': 'https://easylist.to/easylist/fanboy-annoyance.txt',
     'fanboysocial': 'https://easylist.to/easylist/fanboy-social.txt',
     'peterlowe': 'http://pgl.yoyo.org/adservers/serverlist.php?hostformat=adblockplus&mimetype=plaintext',
-    'squid': 'http://www.squidblacklist.org/downloads/sbl-adblock.acl',
+#    'squid': 'http://www.squidblacklist.org/downloads/sbl-adblock.acl',    # No longer accessible
     'warning': 'https://easylist-downloads.adblockplus.org/antiadblockfilters.txt',
 }
 
