@@ -166,7 +166,55 @@ def build_graph(database: Database, visit_id: str, is_webgraph: bool) -> pd.Data
 
     return df_all_graph
 
-def apply_tasks(df: pd.DataFrame, visit_id: int, config_info: dict , ldb_file: Path, output_dir: Path, overwrite: bool, filterlists: list[str], filterlist_rules: dict):
+def build_graph_from_data(data, visit_id: str, is_webgraph: bool) -> pd.DataFrame:
+    """Read SQL data from crawler for a given visit_ID.
+    :param visit_id: visit ID of a crawl URL.
+    :param is_webgraph: compute additional info for WebGraph mode
+    :return: Parsed information (nodes and edges) in pandas df.
+
+
+    """
+    # Read tables from DB and store as DataFrames
+    df_requests, df_responses, df_redirects, call_stacks, javascript = data
+
+    # extract nodes and edges from all categories of interest as described in the paper
+    df_js_nodes, df_js_edges = gs.build_html_components(javascript)
+    df_request_nodes, df_request_edges = gs.build_request_components(df_requests, df_responses, df_redirects, call_stacks, is_webgraph)
+
+    if is_webgraph:
+        df_all_storage_nodes, df_all_storage_edges = gs.build_storage_components(javascript)
+        df_http_cookie_nodes, df_http_cookie_edges = gs.build_http_cookie_components(df_request_edges, df_request_nodes)
+        df_storage_node_setter = find_setters(df_all_storage_nodes, df_http_cookie_nodes, df_all_storage_edges, df_http_cookie_edges)
+    else:
+        df_all_storage_edges = pd.DataFrame()
+        df_http_cookie_edges = pd.DataFrame()
+        df_storage_node_setter = find_setters(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame())
+
+    # Concatenate to get all nodes and edges
+    df_request_nodes['domain'] = None
+    df_all_nodes = pd.concat([df_js_nodes, df_request_nodes, df_storage_node_setter])
+    df_all_nodes['domain'] = df_all_nodes.apply(find_domain, axis=1)
+    df_all_nodes['top_level_domain'] = df_all_nodes['top_level_url'].apply(find_tld)
+    df_all_nodes['setter_domain'] = df_all_nodes['setter'].apply(find_setter_domain)
+    df_all_nodes = df_all_nodes.drop_duplicates()
+    df_all_nodes['graph_attr'] = "Node"
+
+    df_all_edges = pd.concat([df_js_edges, df_request_edges, df_all_storage_edges, df_http_cookie_edges])
+    df_all_edges = df_all_edges.drop_duplicates()
+    df_all_edges['top_level_domain'] = df_all_edges['top_level_url'].apply(find_tld)
+    df_all_edges['graph_attr'] = "Edge"
+
+    df_all_graph = pd.concat([df_all_nodes, df_all_edges])
+    df_all_graph = df_all_graph.astype(
+        {
+            'type' : 'category',
+            'response_status' : 'category'
+        }
+    )
+
+    return df_all_graph
+
+def apply_tasks(df: pd.DataFrame, visit_id: int, config_info: dict , ldb_file: Path, output_dir: Path, overwrite: bool):
 
     """ Sequence of tasks to apply on each website crawled.
     :param df: the graph data (nodes and edges) in pandas df.
@@ -209,7 +257,7 @@ def apply_tasks(df: pd.DataFrame, visit_id: int, config_info: dict , ldb_file: P
         LOGGER.info("Extracted features: %d", end-start)
 
         #Label data
-        df_labelled = ls.label_data(df, filterlists, filterlist_rules)
+        df_labelled = ls.label_data(df)
         if len(df_labelled) > 0:
             labels_path = output_dir / "labelled.csv"
             if overwrite or not labels_path.is_file():
@@ -245,15 +293,14 @@ def pipeline(db_file: Path, ldb_file: Path, features_file: Path, filterlist_dir:
 
     number_failures = 0
 
-    # setup and load files
-    fs.download_lists(filterlist_dir, overwrite)
-    filterlists, filterlist_rules = fs.create_filterlist_rules(filterlist_dir)
     config_info = load_config_info(features_file)
 
     validate_config(config_info, mode)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    BATCH_SIZE = 1
+    THREADS = 1
     with Database(db_file) as database:
 
         # read site visits
@@ -262,6 +309,24 @@ def pipeline(db_file: Path, ldb_file: Path, features_file: Path, filterlist_dir:
         except Exception as e:
             tqdm.write(f"Problem reading the sites_visits: {e}")
             exit()
+
+        website_data_batch = []     # Inputs from database for current batch
+        batch_nr = 0
+        start_idx = BATCH_SIZE * batch_nr
+        end_idx = min(start_idx + BATCH_SIZE, sites_visits.shape[0])    # Stop after dataframe rows are exhausted
+
+        for row_idx in range(start_idx, end_idx):
+            visit_id = sites_visits['visit_id'][row_idx]
+            # SQLite does not play well with multiprocessing so I'll query data beforehand
+            # df_requests, df_responses, df_redirects, call_stacks, javascript = database.website_from_visit_id(visit_id)
+            data = database.website_from_visit_id(visit_id)
+            website_data_batch.append(data)
+
+
+            batch_nr += 1
+
+
+
 
         for _, row in tqdm(sites_visits.iterrows(), total=len(sites_visits), position=0, leave=True, ascii=True):
 
@@ -274,11 +339,13 @@ def pipeline(db_file: Path, ldb_file: Path, features_file: Path, filterlist_dir:
                 start = time.time()
 
                 # build graph nodes and edges dataframe
+                print("Building graph")
                 pdf = build_graph(database, visit_id, mode=="webgraph")
                 tqdm.write(str(pdf.shape))
 
                 # run the feature extraction tasks on the dataframe and node labeling
-                pdf.groupby(['visit_id', 'top_level_domain']).apply(apply_tasks, visit_id, config_info, ldb_file, output_dir, overwrite, filterlists, filterlist_rules)
+                print("Starting feature extraction")
+                pdf.groupby(['visit_id', 'top_level_domain']).apply(apply_tasks, visit_id, config_info, ldb_file, output_dir, overwrite)
                 end = time.time()
                 LOGGER.info("Done! %d", end - start)
 
