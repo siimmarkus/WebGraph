@@ -2,10 +2,11 @@ import networkx as nx
 import re
 from .utils import *
 import time
+import plyvel
 
 from logger import LOGGER
 
-def get_script_content_features(G, df_graph, node, ldb):
+def get_script_content_features(G, df_graph, node, ldb_file):
 
   """
   Function to extract script content features.
@@ -31,27 +32,39 @@ def get_script_content_features(G, df_graph, node, ldb):
   max_length = 0
 
   try:
-    for ancestor in ancestors:
-      try:
-        if nx.get_node_attributes(G, 'type')[ancestor] == 'Script':
+    # lock is a global multiprocessing.Lock that is initialized at process spawn located in the run.py file
+    with plyvel.DB(ldb_file) as ldb:
+      for ancestor in ancestors:
+        try:
+          if nx.get_node_attributes(G, 'type')[ancestor] != 'Script':
+            continue
           content_hash = df_graph[(df_graph['dst'] == ancestor) & (df_graph['content_hash'] != "N/A") & (df_graph['content_hash'].notnull())]["content_hash"]
-          if len(content_hash) > 0:
-            ldb_key = content_hash.iloc[0].encode('utf-8')
-            script_content = ldb.Get(ldb_key)
-            if len(script_content) > 0:
-              script_content = script_content.decode('utf-8')
-              script_length = len(script_content)
-              if script_length > max_length:
-                ascendant_script_length = script_length
-                max_length = script_length
-              if ('eval' in script_content) or ('function' in script_content):
-                ascendant_script_has_eval_or_function = 1
-              for keyword in keywords_fp:
-                if keyword in script_content:
-                  ascendant_script_has_fp_keyword = 1
-                  break
-      except Exception as e:
-        continue
+
+          if len(content_hash) <= 0:
+            continue
+          ldb_key = content_hash.iloc[0].encode('utf-8')
+          #script_content = ldb.Get(ldb_key)    # pylevel
+          script_content = ldb.get(ldb_key)     # plyvel
+
+          if len(script_content) <= 0:
+            continue
+          script_content = script_content.decode('utf-8')
+          script_length = len(script_content)
+
+          if script_length > max_length:
+            ascendant_script_length = script_length
+            max_length = script_length
+
+          if ('eval' in script_content) or ('function' in script_content):
+            ascendant_script_has_eval_or_function = 1
+
+          for keyword in keywords_fp:
+            if keyword in script_content:
+              ascendant_script_has_fp_keyword = 1
+              break
+
+        except Exception as e:
+          continue
   except Exception as e:
     LOGGER.warning("[ get_script_content_features ] : ERROR - ", exc_info=True)
 

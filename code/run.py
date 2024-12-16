@@ -9,11 +9,14 @@ import pandas as pd
 from tqdm import tqdm
 from yaml import full_load
 import leveldb
+import plyvel
+import multiprocessing
+from multiprocessing import Pool, Lock
+from itertools import repeat
 
 import graph as gs
 from graph.database import Database
 import labelling as ls
-import labelling.filterlists as fs
 from features.feature_extraction import extract_graph_features
 
 from utils import return_none_if_fail
@@ -31,14 +34,15 @@ def load_config_info(filename: str) -> dict:
         return full_load(file)
 
 
-def extract_features(pdf: pd.DataFrame, networkx_graph, visit_id: str, config_info: dict, ldb_file: str) -> pd.DataFrame:
+def extract_features(pdf: pd.DataFrame, networkx_graph, visit_id: str, config_info: dict, ldb) -> pd.DataFrame:
     """Getter to generate the features of each node in a graph.
     :param pdf: pandas df of nodes and edges in a graph.
     :param G: Graph object representation of the pdf.
     :return: dataframe of features per node in the graph
     """
     # Generate features for each node in our graph
-    ldb = leveldb.LevelDB(ldb_file)
+    #ldb = leveldb.LevelDB(ldb_file)
+    #ldb = plyvel.DB('/tmp/testdb/')
     df_features = extract_graph_features(pdf, networkx_graph, visit_id, ldb, config_info)
     return df_features
 
@@ -268,6 +272,39 @@ def apply_tasks(df: pd.DataFrame, visit_id: int, config_info: dict , ldb_file: P
     except Exception as e:
         LOGGER.warning("Errored in pipeline", exc_info=True)
 
+def apply_tasks_multi(df: pd.DataFrame, visit_id: int, config_info: dict , ldb_file):
+
+    """ Sequence of tasks to apply on each website crawled.
+    :param df: the graph data (nodes and edges) in pandas df.
+    :param visit_id: visit ID of a crawl URL.
+    :param config_info: dictionary containing features to use.
+    :param ldb_file: path to ldb file.
+    """
+
+    # Build the graph
+    LOGGER.info("%s %d %d", df.iloc[0]['top_level_url'], visit_id, len(df))
+
+
+    try:
+        start = time.time()
+
+        # building networkx_graph
+        networkx_graph = gs.build_networkx_graph(df)
+
+        with lock:
+            # extracting features from graph data and graph structure
+            df_features = extract_features(df, networkx_graph, visit_id, config_info, ldb_file)
+
+        end = time.time()
+        LOGGER.info("Extracted features: %d", end-start)
+
+        #Label data
+        df_labelled = ls.label_data(df)
+
+        return (df_features, df_labelled)
+
+    except Exception as e:
+        LOGGER.warning("Errored in pipeline", exc_info=True)
 
 def validate_config(config_info: Dict[str, Any], mode: str) -> None:
     """ Validate the configuration.
@@ -278,6 +315,50 @@ def validate_config(config_info: Dict[str, Any], mode: str) -> None:
         if "dataflow" in config_info["features_to_extract"]:
             raise Exception("Error: 'dataflow' must not be used in 'adgraph' mode, please remove it from 'features_to_extract'.")
 
+
+def graph_to_file(graph_df, output_dir, config_info):
+    graph_columns = config_info['graph_columns']
+    graph_path = output_dir / "graph.csv"
+
+    # export the graph dataframe to csv file
+    if not graph_path.is_file():
+        graph_df.reindex(columns=graph_columns).to_csv(str(graph_path))
+    else:
+        graph_df.reindex(columns=graph_columns).to_csv(str(graph_path), mode='a', header=False)
+
+def features_labels_to_file(df_features, df_labels, output_dir, config_info):
+    feature_columns = config_info['feature_columns']
+    label_columns = config_info['label_columns']
+
+    # Export the features to csv file
+    features_path = output_dir / "features.csv"
+    if not features_path.is_file():
+        df_features.reindex(columns=feature_columns).to_csv(str(features_path))
+    else:
+        df_features.reindex(columns=feature_columns).to_csv(str(features_path), mode='a', header=False)
+
+
+    # Export labels
+    if len(df_labels) > 0:
+        labels_path = output_dir / "labelled.csv"
+        if not labels_path.is_file():
+            df_labels.reindex(columns=label_columns).to_csv(str(labels_path))
+        else:
+            df_labels.reindex(columns=label_columns).to_csv(str(labels_path), mode='a', header=False)
+
+def init(l):
+    """ This method is used to initialize a multiprocessing lock as a global variable inside a new process.
+    It's a weird case where normal Locks can't be directly passed into new processes when using multiprocessing.Pool
+    source: https://stackoverflow.com/questions/25557686/python-sharing-a-lock-between-processes/25558333#25558333
+
+    Args:
+        l: Multiprocessing Lock
+
+    Returns:
+
+    """
+    global lock
+    lock = l
 
 def pipeline(db_file: Path, ldb_file: Path, features_file: Path, filterlist_dir: Path, output_dir: Path, mode: str, overwrite=True):
 
@@ -299,8 +380,9 @@ def pipeline(db_file: Path, ldb_file: Path, features_file: Path, filterlist_dir:
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    BATCH_SIZE = 1
-    THREADS = 1
+    BATCH_SIZE = 4
+    THREADS = 2
+
     with Database(db_file) as database:
 
         # read site visits
@@ -310,50 +392,71 @@ def pipeline(db_file: Path, ldb_file: Path, features_file: Path, filterlist_dir:
             tqdm.write(f"Problem reading the sites_visits: {e}")
             exit()
 
-        website_data_batch = []     # Inputs from database for current batch
         batch_nr = 0
-        start_idx = BATCH_SIZE * batch_nr
-        end_idx = min(start_idx + BATCH_SIZE, sites_visits.shape[0])    # Stop after dataframe rows are exhausted
+        while True:
+            website_data_batch = []     # Inputs from database for current batch
+            start_idx = BATCH_SIZE * batch_nr
+            end_idx = min(start_idx + BATCH_SIZE, sites_visits.shape[0])    # Stop after dataframe rows are exhausted
 
-        for row_idx in range(start_idx, end_idx):
-            visit_id = sites_visits['visit_id'][row_idx]
-            # SQLite does not play well with multiprocessing so I'll query data beforehand
-            # df_requests, df_responses, df_redirects, call_stacks, javascript = database.website_from_visit_id(visit_id)
-            data = database.website_from_visit_id(visit_id)
-            website_data_batch.append(data)
+            for row_idx in range(start_idx, end_idx):
+                visit_id = sites_visits['visit_id'][row_idx]
+
+                # SQLite does not play well with multiprocessing so I'll query data beforehand
+                # (df_requests, df_responses, df_redirects, call_stacks, javascript) = database.website_from_visit_id(visit_id)
+                data = database.website_from_visit_id(visit_id)
+                website_data_batch.append(data)
+
+            # Create process pool with a lock for leveldb access management
+            l = multiprocessing.Lock()
+            with multiprocessing.Pool(THREADS, initializer=init, initargs=(l,)) as p:
+                print(f"Building graphs for batch={batch_nr}")
+                graphs = p.starmap(build_graph_from_data, zip(website_data_batch, repeat(visit_id), repeat(mode=="webgraph")))
+
+                print(f"Extracting features and labelling batch={batch_nr}")
+                features_labels = p.starmap(apply_tasks_multi, zip(graphs, repeat(visit_id), repeat(config_info), repeat(ldb_file)))
+
+            print(f"Finished batch={batch_nr}")
+
+            # Write batch results to file
+            for graph_df in graphs:
+                graph_to_file(graph_df, output_dir, config_info)
+
+            for (df_features, df_labelled) in features_labels:
+                features_labels_to_file(df_features, df_labelled, output_dir, config_info)
 
 
             batch_nr += 1
+            # All sites have been processed
+            if end_idx >= sites_visits.shape[0]:
+                break
 
 
-
-
-        for _, row in tqdm(sites_visits.iterrows(), total=len(sites_visits), position=0, leave=True, ascii=True):
-
-            # For each visit, grab the visit_id
-            visit_id = row['visit_id']
-            tqdm.write("")
-            tqdm.write(f"• Visit ID: {visit_id}")
-
-            try:
-                start = time.time()
-
-                # build graph nodes and edges dataframe
-                print("Building graph")
-                pdf = build_graph(database, visit_id, mode=="webgraph")
-                tqdm.write(str(pdf.shape))
-
-                # run the feature extraction tasks on the dataframe and node labeling
-                print("Starting feature extraction")
-                pdf.groupby(['visit_id', 'top_level_domain']).apply(apply_tasks, visit_id, config_info, ldb_file, output_dir, overwrite)
-                end = time.time()
-                LOGGER.info("Done! %d", end - start)
-
-            except Exception as e:
-                number_failures += 1
-                tqdm.write(f"Fail: {number_failures}")
-                tqdm.write(f"Error: {e}")
-                traceback.print_exc()
+        # for _, row in tqdm(sites_visits.iterrows(), total=len(sites_visits), position=0, leave=True, ascii=True):
+        #
+        #     # For each visit, grab the visit_id
+        #     visit_id = row['visit_id']
+        #     tqdm.write("")
+        #     tqdm.write(f"• Visit ID: {visit_id}")
+        #
+        #     try:
+        #         start = time.time()
+        #
+        #         # build graph nodes and edges dataframe
+        #         print("Building graph")
+        #         pdf = build_graph(database, visit_id, mode=="webgraph")
+        #         tqdm.write(str(pdf.shape))
+        #
+        #         # run the feature extraction tasks on the dataframe and node labeling
+        #         print("Starting feature extraction")
+        #         pdf.groupby(['visit_id', 'top_level_domain']).apply(apply_tasks, visit_id, config_info, ldb_file, output_dir, overwrite)
+        #         end = time.time()
+        #         LOGGER.info("Done! %d", end - start)
+        #
+        #     except Exception as e:
+        #         number_failures += 1
+        #         tqdm.write(f"Fail: {number_failures}")
+        #         tqdm.write(f"Error: {e}")
+        #         traceback.print_exc()
 
     percent = (number_failures/len(sites_visits))*10
     LOGGER.info(f"Fail: {number_failures}, Total: {len(sites_visits)}, Percentage:{percent} %s", str(db_file))
