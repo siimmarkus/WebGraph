@@ -223,8 +223,13 @@ def build_storage_components(df_javascript):
             df_js_cookie_edges = df_js_cookie[[
                 'visit_id', 'script_url', 'document_url','top_level_url', 'name', 'action', 'attr', 'time_stamp']]
             df_js_cookie_edges['domain'] = df_js_cookie_edges['document_url'].apply(get_domain)
+
+
+            # If input dataframe is empty, then apply will also return Dataframe instead of Series. result_type='reduce' to get around that
             df_js_cookie_edges['cookie_key'] = df_js_cookie_edges[['name', 'domain']].apply(
-                lambda x: get_cookiedom_key(*x), axis=1)
+                lambda x: get_cookiedom_key(*x), axis=1, result_type='reduce')
+
+
 
             # To be inserted
             df_js_cookie_nodes = df_js_cookie_edges[df_js_cookie_edges['action'] != "CS"][[

@@ -1,6 +1,5 @@
 import argparse
 import sys
-import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Union
 import time
@@ -8,10 +7,7 @@ import time
 import pandas as pd
 from tqdm import tqdm
 from yaml import full_load
-import leveldb
-import plyvel
 import multiprocessing
-from multiprocessing import Pool, Lock
 from itertools import repeat
 
 import graph as gs
@@ -23,7 +19,7 @@ from utils import return_none_if_fail
 from logger import LOGGER
 
 pd.set_option("display.max_rows", None, "display.max_columns", None)
-
+pd.options.mode.chained_assignment = None   # Suppress pandas SettingWithCopyWarning warnings
 
 def load_config_info(filename: str) -> dict:
     """Load features from features.yaml file
@@ -43,7 +39,8 @@ def extract_features(pdf: pd.DataFrame, networkx_graph, visit_id: str, config_in
     # Generate features for each node in our graph
     #ldb = leveldb.LevelDB(ldb_file)
     #ldb = plyvel.DB('/tmp/testdb/')
-    df_features = extract_graph_features(pdf, networkx_graph, visit_id, ldb, config_info)
+
+    df_features = extract_graph_features(pdf, networkx_graph, visit_id, ldb, config_info, lock)
     return df_features
 
 @return_none_if_fail()
@@ -291,9 +288,9 @@ def apply_tasks_multi(df: pd.DataFrame, visit_id: int, config_info: dict , ldb_f
         # building networkx_graph
         networkx_graph = gs.build_networkx_graph(df)
 
-        with lock:
-            # extracting features from graph data and graph structure
-            df_features = extract_features(df, networkx_graph, visit_id, config_info, ldb_file)
+
+        # extracting features from graph data and graph structure
+        df_features = extract_features(df, networkx_graph, visit_id, config_info, ldb_file)
 
         end = time.time()
         LOGGER.info("Extracted features: %d", end-start)
@@ -380,8 +377,8 @@ def pipeline(db_file: Path, ldb_file: Path, features_file: Path, filterlist_dir:
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    BATCH_SIZE = 4
-    THREADS = 2
+    BATCH_SIZE = 100
+    THREADS = 8
 
     with Database(db_file) as database:
 
@@ -393,42 +390,42 @@ def pipeline(db_file: Path, ldb_file: Path, features_file: Path, filterlist_dir:
             exit()
 
         batch_nr = 0
-        while True:
-            website_data_batch = []     # Inputs from database for current batch
-            start_idx = BATCH_SIZE * batch_nr
-            end_idx = min(start_idx + BATCH_SIZE, sites_visits.shape[0])    # Stop after dataframe rows are exhausted
+        with tqdm(total=sites_visits.shape[0]) as pbar:
+            while True:
+                website_data_batch = []     # Inputs from database for current batch
+                start_idx = BATCH_SIZE * batch_nr
+                end_idx = min(start_idx + BATCH_SIZE, sites_visits.shape[0])    # Stop after dataframe rows are exhausted
 
-            for row_idx in range(start_idx, end_idx):
-                visit_id = sites_visits['visit_id'][row_idx]
+                # SQLite does not play well with multiprocessing so I'll query a batch data beforehand
+                for row_idx in range(start_idx, end_idx):
+                    visit_id = sites_visits['visit_id'][row_idx]
+                    data = database.website_from_visit_id(visit_id) # returns (df_requests, df_responses, df_redirects, call_stacks, javascript)
+                    website_data_batch.append(data)
 
-                # SQLite does not play well with multiprocessing so I'll query data beforehand
-                # (df_requests, df_responses, df_redirects, call_stacks, javascript) = database.website_from_visit_id(visit_id)
-                data = database.website_from_visit_id(visit_id)
-                website_data_batch.append(data)
+                # Create process pool with a lock for leveldb access management
+                l = multiprocessing.Lock()
+                with multiprocessing.Pool(THREADS, initializer=init, initargs=(l,)) as p:
+                    print(f"Building graphs for batch={batch_nr}")
+                    graphs = p.starmap(build_graph_from_data, zip(website_data_batch, repeat(visit_id), repeat(mode=="webgraph")))
 
-            # Create process pool with a lock for leveldb access management
-            l = multiprocessing.Lock()
-            with multiprocessing.Pool(THREADS, initializer=init, initargs=(l,)) as p:
-                print(f"Building graphs for batch={batch_nr}")
-                graphs = p.starmap(build_graph_from_data, zip(website_data_batch, repeat(visit_id), repeat(mode=="webgraph")))
+                    print(f"Extracting features and labelling batch={batch_nr}")
+                    features_labels = p.starmap(apply_tasks_multi, zip(graphs, repeat(visit_id), repeat(config_info), repeat(ldb_file)))
 
-                print(f"Extracting features and labelling batch={batch_nr}")
-                features_labels = p.starmap(apply_tasks_multi, zip(graphs, repeat(visit_id), repeat(config_info), repeat(ldb_file)))
+                print(f"Finished batch={batch_nr}")
 
-            print(f"Finished batch={batch_nr}")
+                # Write batch results to file
+                for graph_df in graphs:
+                    graph_to_file(graph_df, output_dir, config_info)
 
-            # Write batch results to file
-            for graph_df in graphs:
-                graph_to_file(graph_df, output_dir, config_info)
-
-            for (df_features, df_labelled) in features_labels:
-                features_labels_to_file(df_features, df_labelled, output_dir, config_info)
+                for (df_features, df_labelled) in features_labels:
+                    features_labels_to_file(df_features, df_labelled, output_dir, config_info)
 
 
-            batch_nr += 1
-            # All sites have been processed
-            if end_idx >= sites_visits.shape[0]:
-                break
+                batch_nr += 1
+                pbar.update(end_idx-start_idx)
+                # All sites have been processed
+                if end_idx >= sites_visits.shape[0]:
+                    break
 
 
         # for _, row in tqdm(sites_visits.iterrows(), total=len(sites_visits), position=0, leave=True, ascii=True):

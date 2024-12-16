@@ -6,7 +6,7 @@ import plyvel
 
 from logger import LOGGER
 
-def get_script_content_features(G, df_graph, node, ldb_file):
+def get_script_content_features(G, df_graph, node, ldb_file, lock):
 
   """
   Function to extract script content features.
@@ -33,7 +33,11 @@ def get_script_content_features(G, df_graph, node, ldb_file):
 
   try:
     # lock is a global multiprocessing.Lock that is initialized at process spawn located in the run.py file
-    with plyvel.DB(ldb_file) as ldb:
+
+    #start = time.time_ns()
+    with lock, plyvel.DB(ldb_file) as ldb:
+      #stop = time.time_ns()
+      #print(f"Received leveldb lock in {(mid-start) / 1000000}ms and opened leveldb in { (stop-mid) / 1000000}ms")
       for ancestor in ancestors:
         try:
           if nx.get_node_attributes(G, 'type')[ancestor] != 'Script':
@@ -212,7 +216,7 @@ def get_connectivity_features(G, df_graph, node):
   return connectivity_features, connectivity_feature_names
 
 
-def get_structure_features(G, df_graph, node, ldb):
+def get_structure_features(G, df_graph, node, ldb, lock):
 
   """
   Function to extract structural features. This function calls
@@ -232,7 +236,7 @@ def get_structure_features(G, df_graph, node, ldb):
   all_feature_names = []
   ne_features, ne_feature_names = get_ne_features(G)
   connectivity_features, connectivity_feature_names = get_connectivity_features(G, df_graph, node)
-  sc_features, sc_features_names = get_script_content_features(G, df_graph, node, ldb)
+  sc_features, sc_features_names = get_script_content_features(G, df_graph, node, ldb, lock)
 
   all_features = ne_features + connectivity_features + sc_features
   all_feature_names = ne_feature_names + connectivity_feature_names + sc_features_names

@@ -19,7 +19,9 @@ def convert_attr(row):
 
     attr = {}
     try:
-        attr["openwpm"] = json.loads(row['attributes'])["0"]["openwpm"]
+        if row['attributes'] != "":
+            attr["openwpm"] = json.loads(row['attributes'])["0"]["openwpm"]
+
         attr['subtype'] = row['subtype_list']
         if row['script_loc_eval'] != "":
             attr['eval'] = True

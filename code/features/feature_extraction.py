@@ -5,7 +5,7 @@ from .structure import get_structure_features
 from .content import get_content_features
 
 def extract_graph_node_features(G, df_graph, G_indirect, df_indirect_graph, G_indirect_all,
-    node, dict_redirect, ldb, selected_features, vid):
+    node, dict_redirect, ldb, selected_features, vid, lock):
 
     """
     Function to extract features for a node of the graph.
@@ -40,7 +40,7 @@ def extract_graph_node_features(G, df_graph, G_indirect, df_indirect_graph, G_in
     if 'content' in selected_features:
         content_features, content_feature_names = get_content_features(G, df_graph, node)
     if 'structure' in selected_features:
-        structure_features, structure_feature_names = get_structure_features(G, df_graph, node, ldb)
+        structure_features, structure_feature_names = get_structure_features(G, df_graph, node, ldb, lock)
     if 'dataflow' in selected_features:
         dataflow_features, dataflow_feature_names = get_dataflow_features(G, df_graph, node, dict_redirect, G_indirect, G_indirect_all, df_indirect_graph)
     if 'additional' in selected_features:
@@ -53,7 +53,7 @@ def extract_graph_node_features(G, df_graph, G_indirect, df_indirect_graph, G_in
 
     return df
 
-def extract_graph_features(df_graph, G, vid, ldb, feature_config):
+def extract_graph_features(df_graph, G, vid, ldb, feature_config, lock):
 
     """
     Function to extract features.
@@ -98,7 +98,8 @@ def extract_graph_features(df_graph, G, vid, ldb, feature_config):
                 dict_redirect,
                 ldb,
                 selected_features,
-                vid
+                vid,
+                lock
             )
             df_features = pd.concat([df_features, df_feature])
     

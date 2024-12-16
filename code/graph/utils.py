@@ -16,9 +16,12 @@ def get_cookiedom_key(name, domain):
 
     try:
         return name + '|$$|' + domain
+        #return f"{name}|$$|{domain}"
     except:
         return name
+
     return name
+
 
 def get_domain(url:Union[str, list[str]]) -> Union[str, list[str]]:
 
