@@ -154,7 +154,11 @@ def build_graph(database: Database, visit_id: str, is_webgraph: bool) -> pd.Data
 
     df_all_edges = pd.concat([df_js_edges, df_request_edges, df_all_storage_edges, df_http_cookie_edges])
     df_all_edges = df_all_edges.drop_duplicates()
-    df_all_edges['top_level_domain'] = df_all_edges['top_level_url'].apply(find_tld)
+    # 'top_level_url' can be missing from df
+    if df_all_edges['top_level_url']:
+        df_all_edges['top_level_domain'] = df_all_edges['top_level_url'].apply(find_tld)
+    else:
+        df_all_edges['top_level_domain'] = ""
     df_all_edges['graph_attr'] = "Edge"
 
     df_all_graph = pd.concat([df_all_nodes, df_all_edges])
@@ -175,6 +179,8 @@ def build_graph_from_data(data, visit_id: str, is_webgraph: bool) -> pd.DataFram
 
 
     """
+    #print(f"Building graph for visit_id {visit_id}")
+
     # Read tables from DB and store as DataFrames
     df_requests, df_responses, df_redirects, call_stacks, javascript = data
 
@@ -191,6 +197,7 @@ def build_graph_from_data(data, visit_id: str, is_webgraph: bool) -> pd.DataFram
         df_http_cookie_edges = pd.DataFrame()
         df_storage_node_setter = find_setters(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame())
 
+
     # Concatenate to get all nodes and edges
     df_request_nodes['domain'] = None
     df_all_nodes = pd.concat([df_js_nodes, df_request_nodes, df_storage_node_setter])
@@ -202,7 +209,12 @@ def build_graph_from_data(data, visit_id: str, is_webgraph: bool) -> pd.DataFram
 
     df_all_edges = pd.concat([df_js_edges, df_request_edges, df_all_storage_edges, df_http_cookie_edges])
     df_all_edges = df_all_edges.drop_duplicates()
-    df_all_edges['top_level_domain'] = df_all_edges['top_level_url'].apply(find_tld)
+
+    # 'top_level_url' can be missing from df
+    if 'top_level_url' in df_all_edges.columns:
+        df_all_edges['top_level_domain'] = df_all_edges['top_level_url'].apply(find_tld)
+    else:
+        df_all_edges['top_level_domain'] = ""
     df_all_edges['graph_attr'] = "Edge"
 
     df_all_graph = pd.concat([df_all_nodes, df_all_edges])
@@ -212,6 +224,8 @@ def build_graph_from_data(data, visit_id: str, is_webgraph: bool) -> pd.DataFram
             'response_status' : 'category'
         }
     )
+
+
 
     return df_all_graph
 
@@ -393,6 +407,7 @@ def pipeline(db_file: Path, ldb_file: Path, features_file: Path, filterlist_dir:
         with tqdm(total=sites_visits.shape[0]) as pbar:
             while True:
                 website_data_batch = []     # Inputs from database for current batch
+                visit_id_batch = []
                 start_idx = BATCH_SIZE * batch_nr
                 end_idx = min(start_idx + BATCH_SIZE, sites_visits.shape[0])    # Stop after dataframe rows are exhausted
 
@@ -401,15 +416,16 @@ def pipeline(db_file: Path, ldb_file: Path, features_file: Path, filterlist_dir:
                     visit_id = sites_visits['visit_id'][row_idx]
                     data = database.website_from_visit_id(visit_id) # returns (df_requests, df_responses, df_redirects, call_stacks, javascript)
                     website_data_batch.append(data)
+                    visit_id_batch.append(visit_id)
 
                 # Create process pool with a lock for leveldb access management
                 l = multiprocessing.Lock()
                 with multiprocessing.Pool(THREADS, initializer=init, initargs=(l,)) as p:
                     print(f"Building graphs for batch={batch_nr}")
-                    graphs = p.starmap(build_graph_from_data, zip(website_data_batch, repeat(visit_id), repeat(mode=="webgraph")))
+                    graphs = p.starmap(build_graph_from_data, zip(website_data_batch, visit_id_batch, repeat(mode=="webgraph")))
 
                     print(f"Extracting features and labelling batch={batch_nr}")
-                    features_labels = p.starmap(apply_tasks_multi, zip(graphs, repeat(visit_id), repeat(config_info), repeat(ldb_file)))
+                    features_labels = p.starmap(apply_tasks_multi, zip(graphs, visit_id_batch, repeat(config_info), repeat(ldb_file)))
 
                 print(f"Finished batch={batch_nr}")
 
@@ -417,7 +433,13 @@ def pipeline(db_file: Path, ldb_file: Path, features_file: Path, filterlist_dir:
                 for graph_df in graphs:
                     graph_to_file(graph_df, output_dir, config_info)
 
-                for (df_features, df_labelled) in features_labels:
+
+                for result in features_labels:
+                    # Sometimes feature extraction returns None
+                    if result is None:
+                        continue
+
+                    df_features, df_labelled = result
                     features_labels_to_file(df_features, df_labelled, output_dir, config_info)
 
 
@@ -427,33 +449,6 @@ def pipeline(db_file: Path, ldb_file: Path, features_file: Path, filterlist_dir:
                 if end_idx >= sites_visits.shape[0]:
                     break
 
-
-        # for _, row in tqdm(sites_visits.iterrows(), total=len(sites_visits), position=0, leave=True, ascii=True):
-        #
-        #     # For each visit, grab the visit_id
-        #     visit_id = row['visit_id']
-        #     tqdm.write("")
-        #     tqdm.write(f"• Visit ID: {visit_id}")
-        #
-        #     try:
-        #         start = time.time()
-        #
-        #         # build graph nodes and edges dataframe
-        #         print("Building graph")
-        #         pdf = build_graph(database, visit_id, mode=="webgraph")
-        #         tqdm.write(str(pdf.shape))
-        #
-        #         # run the feature extraction tasks on the dataframe and node labeling
-        #         print("Starting feature extraction")
-        #         pdf.groupby(['visit_id', 'top_level_domain']).apply(apply_tasks, visit_id, config_info, ldb_file, output_dir, overwrite)
-        #         end = time.time()
-        #         LOGGER.info("Done! %d", end - start)
-        #
-        #     except Exception as e:
-        #         number_failures += 1
-        #         tqdm.write(f"Fail: {number_failures}")
-        #         tqdm.write(f"Error: {e}")
-        #         traceback.print_exc()
 
     percent = (number_failures/len(sites_visits))*10
     LOGGER.info(f"Fail: {number_failures}, Total: {len(sites_visits)}, Percentage:{percent} %s", str(db_file))

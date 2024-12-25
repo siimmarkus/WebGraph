@@ -1,0 +1,45 @@
+
+services:
+  pgloader:
+    container_name: pgloader
+    image: dimitri/pgloader:ccl.latest
+    command: pgloader --verbose --debug /var/pgloader/db.load
+    secrets:
+      - db_password
+    networks:
+      - db
+    logging:
+      driver: json-file
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - /home/siim/data/datadir-10k:/var/datadir
+      - ./db.load:/var/pgloader/db.load
+
+  db:
+    container_name: postgres
+    image: postgres:17.0
+    restart: always
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_USER: postgres
+      POSTGRES_DB: webgraph
+    secrets:
+      - db_password
+    ports:
+      - '5432:5432'  # Expose port for external access to db
+    networks:
+      - db
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 1s
+      timeout: 5s
+      retries: 10
+
+secrets:
+  db_password:
+    file: secrets/db_password.txt
+
+networks:
+  db:

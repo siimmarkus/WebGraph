@@ -142,5 +142,6 @@ label_columns:
       - visit_id
       - top_level_url
       - name
+      - braveblock_label
       - label
  

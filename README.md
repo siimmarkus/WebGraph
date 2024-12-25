@@ -1,9 +1,40 @@
 # WebGraph
 
-Update (30/07/2024): We are currently resolving some issues related to OpenWPM compatibility with Firefox for WebGraph crawls. We will release fixes soon. In the meantime, a trained model of WebGraph on 20k sites can be found here: https://drive.google.com/drive/folders/1IivW179R5YHYCqOMFH77LxyZ0aJixqFV?usp=drive_link . This model was trained on April 6-8 2023.  
+### WebGraph install
+#### Installing old python
+```
+sudo apt update
+sudo apt install software-properties-common
+sudo add-apt-repository ppa:deadsnakes/ppa
+sudo apt install python3.9 python3.9-dev python3.9-venv
+```
 
-Artifact release for the paper "WebGraph: Capturing Advertising and Tracking Information Flows for Robust Blocking", published at USENIX Security 2022.
-<hr/>
+
+#### Error about no file features.yaml
+The step “1. Graph preprocessing and Feature Building” in the README needs to be run from the WebGraph/code/ directory since there are some file reads with relative paths that will error if code is ran from a different directory.
+
+
+#### Running with leveldb
+
+```
+python3 ~/WebGraph/code/run.py --input-db ~/datadir/crawl-data.sqlite --ldb ~/datadir/content.ldb --mode webgraph
+```
+
+#### Migrating sqlite to postgresql
+Contents of `db.load` file
+```
+load database
+     from sqlite:///var/lib/postgresql/data/datadir-100/crawl-data.sqlite
+     into pgsql://postgres@localhost/webgraph
+
+with include drop, create tables, create indexes, reset sequences
+
+CAST type string to text drop typemod;
+```
+
+```
+pgloader db.load
+```
 
 ### Requirements
 

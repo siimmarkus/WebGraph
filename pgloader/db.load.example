@@ -1,0 +1,10 @@
+load database
+     from sqlite:///var/datadir/test-crawl-data.sqlite
+     into pgsql://postgres:password_goes_here@postgres/webgraph
+
+with batch rows = 100000,
+        include drop, create tables, create indexes, reset sequences
+
+CAST type string to text drop typemod
+
+set work_mem to '1024MB', maintenance_work_mem to '2048 MB';

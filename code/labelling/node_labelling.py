@@ -51,9 +51,10 @@ def label_nodes(df):
         include_easyprivacy=True,  # Whether to include easyprivacy rules. True by default
     )
 
-    df_nodes['label'] = df_nodes.apply(label_node_braveblock, adblocker=adblocker, axis=1)
-    df_nodes = df_nodes[['visit_id', 'name', 'top_level_url', 'label']]
+    df_nodes['braveblock_label'] = df_nodes.apply(label_node_braveblock, adblocker=adblocker, axis=1)
+    df_nodes['label'] = df_nodes["name"].str.contains("/g/collect")
 
+    df_nodes = df_nodes[['visit_id', 'name', 'top_level_url', 'braveblock_label', 'label']]
     return df_nodes
 
 
