@@ -28,3 +28,23 @@ SELECT visit_id from crawl_history where command = 'GetCommand' and command_stat
 
 SELECT COUNT(*) FROM javascript;
 
+SELECT COUNT(*) FROM http_responses WHERE content_hash IS NOT NULL;
+
+CREATE EXTENSION HSTORE;
+CREATE TABLE leveldb (h hstore);
+INSERT INTO leveldb VALUES ('a=>b, c=>d');
+SELECT h['c'] FROM leveldb;
+
+DROP TABLE IF EXISTS key_value;
+CREATE TABLE IF NOT EXISTS key_value (
+    key TEXT,
+    value TEXT
+);
+
+select
+  table_name,
+  pg_size_pretty(pg_total_relation_size(quote_ident(table_name))),
+  pg_total_relation_size(quote_ident(table_name))
+from information_schema.tables
+where table_schema = 'public'
+order by 3 desc;
