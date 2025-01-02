@@ -443,8 +443,12 @@ def pipeline(db_file: Path, ldb_file: Path, features_file: Path, filterlist_dir:
                     features_labels_to_file(df_features, df_labelled, output_dir, config_info)
 
 
-                batch_nr += 1
+                with open("status.txt", "a") as f:
+                    f.write(f"Finished processing batch, {end_idx}/{sites_visits.shape[0]}")
+
                 pbar.update(end_idx-start_idx)
+                batch_nr += 1
+
                 # All sites have been processed
                 if end_idx >= sites_visits.shape[0]:
                     break

@@ -12,5 +12,6 @@ Levenshtein==0.18.1
 networkx==2.8.4
 leveldb==0.201
 treeinterpreter==0.2.3
-plyvel
-braveblock
+plyvel==1.5.1
+braveblock==0.5.1
+imbalanced-learn==0.12.4

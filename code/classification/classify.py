@@ -2,7 +2,7 @@ import argparse
 import sys
 import os
 import random
-import collections
+from collections import Counter
 import joblib
 from typing import List
 import json
@@ -12,6 +12,9 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix, precision_score, recall_score
 from treeinterpreter import treeinterpreter as ti
+
+from imblearn.over_sampling import SMOTE
+
 
 #from logger import LOGGER
 
@@ -257,7 +260,7 @@ def classify_with_model(clf, test, result_dir, feature_list):
 
     return list(test_mani.label), list(y_pred), list(test_mani.name), list(test_mani.visit_id)
 
-def classify(train, test, result_dir, tag, save_model, pred_probability, interpret):
+def classify(train, test, result_dir, tag, save_model, pred_probability, interpret, ns):
 
     """
     Function to perform classification.
@@ -288,8 +291,19 @@ def classify(train, test, result_dir, tag, save_model, pred_probability, interpr
     df_feature_train = df_feature_train.to_numpy()
     train_labels = train_mani.label.to_numpy()
 
-    # Perform training
-    clf.fit(df_feature_train, train_labels)
+    # Do oversampling of underrepresented class
+    if ns.upsample:
+        print('Resampling train dataset to fix imbalances using SMOTE')
+        print('Original dataset shape %s' % Counter(train_labels))
+        sm = SMOTE(random_state=42)
+        X_resampled, y_resampled = sm.fit_resample(df_feature_train, train_labels)
+        print('Resampled dataset shape %s' % Counter(y_resampled))
+        clf.fit(X_resampled, y_resampled)
+    else:
+        # Perform training
+        clf.fit(df_feature_train, train_labels)
+
+
 
     # Obtain feature importances
     feature_importances = pd.DataFrame(clf.feature_importances_, index = columns, columns=['importance']).sort_values('importance', ascending=False)
@@ -323,7 +337,7 @@ def classify(train, test, result_dir, tag, save_model, pred_probability, interpr
     return list(test_mani.label), list(y_pred), list(test_mani.name), list(test_mani.visit_id)
 
 
-def classify_crossval(df_labelled, result_dir, save_model, pred_probability, interpret):
+def classify_crossval(df_labelled, result_dir, save_model, pred_probability, interpret, ns):
 
     """
     Function to perform cross validation.
@@ -366,12 +380,12 @@ def classify_crossval(df_labelled, result_dir, save_model, pred_probability, int
             f.write("Test: " + str(test_pos) + " " + get_perc(test_pos, len(df_test)) + "\n")
             f.write("\n")
 
-        result = classify(df_train, df_test, result_dir, i, save_model, pred_probability, interpret)
+        result = classify(df_train, df_test, result_dir, i, save_model, pred_probability, interpret, ns)
         results.append(result)
 
     return results
 
-def pipeline(feature_file, label_file, result_dir, save_model, pred_probability, interpret):
+def pipeline(feature_file, label_file, result_dir, save_model, pred_probability, interpret, ns):
 
     """
     Function to run classification pipeline.
@@ -403,7 +417,7 @@ def pipeline(feature_file, label_file, result_dir, save_model, pred_probability,
     df_labelled = df_features.merge(df_labels[['visit_id', 'name', 'label']], on=['visit_id', 'name'])
     df_labelled = df_labelled[df_labelled['label'] != "Error"]
 
-    results = classify_crossval(df_labelled, result_dir, save_model, pred_probability, interpret)
+    results = classify_crossval(df_labelled, result_dir, save_model, pred_probability, interpret, ns)
     report = describe_classif_reports(results, result_dir)
 
 def main(program: str, args: List[str]):
@@ -446,9 +460,15 @@ def main(program: str, args: List[str]):
         help="Log results of tree interpreter.",
         default=False
     )
+    parser.add_argument(
+        "--upsample",
+        type=bool,
+        help="Upsample minority class using SMOTE.",
+        default=False
+    )
 
     ns = parser.parse_args(args)
-    pipeline(ns.features, ns.labels, ns.out, ns.save, ns.probability, ns.interpret)
+    pipeline(ns.features, ns.labels, ns.out, ns.save, ns.probability, ns.interpret, ns)
 
 
 if __name__ == "__main__":

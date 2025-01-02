@@ -1,5 +1,7 @@
 import pandas as pd
 import networkx as nx
+
+from .additional import get_additional_features
 from .dataflow import pre_extraction, get_dataflow_features
 from .structure import get_structure_features
 from .content import get_content_features
