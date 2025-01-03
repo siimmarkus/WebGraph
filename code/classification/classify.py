@@ -13,6 +13,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix, precision_score, recall_score
 from treeinterpreter import treeinterpreter as ti
 
+from imblearn.under_sampling import ClusterCentroids
 from imblearn.over_sampling import SMOTE
 
 
@@ -292,11 +293,15 @@ def classify(train, test, result_dir, tag, save_model, pred_probability, interpr
     train_labels = train_mani.label.to_numpy()
 
     # Do oversampling of underrepresented class
-    if ns.upsample:
-        print('Resampling train dataset to fix imbalances using SMOTE')
+    if ns.resample:
+        print('Resampling train dataset to fix imbalances')
         print('Original dataset shape %s' % Counter(train_labels))
-        sm = SMOTE(random_state=42)
+        sm = SMOTE(random_state=42, sampling_strategy='not minority')
         X_resampled, y_resampled = sm.fit_resample(df_feature_train, train_labels)
+
+        #cc = ClusterCentroids(random_state=0)
+        #X_resampled, y_resampled = cc.fit_resample(df_feature_train, train_labels)
+
         print('Resampled dataset shape %s' % Counter(y_resampled))
         clf.fit(X_resampled, y_resampled)
     else:
@@ -461,7 +466,7 @@ def main(program: str, args: List[str]):
         default=False
     )
     parser.add_argument(
-        "--upsample",
+        "--resample",
         type=bool,
         help="Upsample minority class using SMOTE.",
         default=False
