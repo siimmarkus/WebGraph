@@ -296,7 +296,7 @@ def classify(train, test, result_dir, tag, save_model, pred_probability, interpr
     if ns.resample:
         print('Resampling train dataset to fix imbalances')
         print('Original dataset shape %s' % Counter(train_labels))
-        sm = SMOTE(random_state=42, sampling_strategy='not minority')
+        sm = SMOTE(random_state=42)
         X_resampled, y_resampled = sm.fit_resample(df_feature_train, train_labels)
 
         #cc = ClusterCentroids(random_state=0)
@@ -449,30 +449,27 @@ def main(program: str, args: List[str]):
     )
     parser.add_argument(
         "--save",
-        type=bool,
         help="Save trained model file.",
-        default=False
+        action='store_true'
     )
     parser.add_argument(
         "--probability",
-        type=bool,
         help="Log prediction probabilities.",
-        default=False
+        action='store_true'
     )
     parser.add_argument(
         "--interpret",
-        type=bool,
         help="Log results of tree interpreter.",
-        default=False
+        action='store_true'
     )
     parser.add_argument(
         "--resample",
-        type=bool,
         help="Upsample minority class using SMOTE.",
-        default=False
+        action='store_true'
     )
 
     ns = parser.parse_args(args)
+    print(ns)
     pipeline(ns.features, ns.labels, ns.out, ns.save, ns.probability, ns.interpret, ns)
 
 
