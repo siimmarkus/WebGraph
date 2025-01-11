@@ -371,7 +371,7 @@ def init(l):
     global lock
     lock = l
 
-def pipeline(db_file: Path, ldb_file: Path, features_file: Path, filterlist_dir: Path, output_dir: Path, mode: str, overwrite=True):
+def pipeline(db_file: Path, ldb_file: Path, features_file: Path, output_dir: Path, mode: str, ns):
 
     """ Graph processing and labeling pipeline
     :param db_file: the graph data (nodes and edges) in pandas df.
@@ -392,7 +392,7 @@ def pipeline(db_file: Path, ldb_file: Path, features_file: Path, filterlist_dir:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     BATCH_SIZE = 100
-    THREADS = 8
+    THREADS = ns.threads
 
     with Database(db_file) as database:
 
@@ -499,10 +499,17 @@ def main(program: str, args: List[str]):
         default="webgraph"
     )
 
+    parser.add_argument(
+        "--threads",
+        type=int,
+        help="Number of threads to use for multiprocessing.",
+        default=1
+    )
+
 
     ns= parser.parse_args(args)
 
-    pipeline(ns.input_db, ns.ldb, ns.features, ns.filters, ns.out, ns.mode, overwrite=False)
+    pipeline(ns.input_db, ns.ldb, ns.features, ns.out, ns.mode, ns)
 
 
 if __name__ == "__main__":

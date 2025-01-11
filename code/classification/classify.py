@@ -13,7 +13,6 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix, precision_score, recall_score
 from treeinterpreter import treeinterpreter as ti
 
-from imblearn.under_sampling import ClusterCentroids
 from imblearn.over_sampling import SMOTE
 
 
@@ -274,6 +273,7 @@ def classify(train, test, result_dir, tag, save_model, pred_probability, interpr
         save_model: Boolean value indicating whether to save the trained model or not.
         pred_probability: Boolean value indicating whether to save the prediction probabilities or not.
         interpret: Boolean value indicating whether to use tree interpreter on predictions or not.
+        ns: Namespace from parsing command line arguments
     Returns:
         list(test_mani.label): Truth labels of test data.
         list(y_pred): Predicted labels of test data.
@@ -299,16 +299,11 @@ def classify(train, test, result_dir, tag, save_model, pred_probability, interpr
         sm = SMOTE(random_state=42)
         X_resampled, y_resampled = sm.fit_resample(df_feature_train, train_labels)
 
-        #cc = ClusterCentroids(random_state=0)
-        #X_resampled, y_resampled = cc.fit_resample(df_feature_train, train_labels)
-
         print('Resampled dataset shape %s' % Counter(y_resampled))
         clf.fit(X_resampled, y_resampled)
     else:
         # Perform training
         clf.fit(df_feature_train, train_labels)
-
-
 
     # Obtain feature importances
     feature_importances = pd.DataFrame(clf.feature_importances_, index = columns, columns=['importance']).sort_values('importance', ascending=False)

@@ -1,6 +1,25 @@
 # WebGraph
 
-### WebGraph install
+## Update: January 2025
+
+I updated WebGraph as part of my Semester Project at EPFL SPRING Lab. Main contributions:
+- Graph building and feature extraction (`run.py`)
+  - Ran performance profiling on graph building and feature extraction. Determined that the two main slowdowns were
+URL checks against ad-blocker filterlist and feature extraction relying on networkx (implemented in pure python).
+  - Replaced the previous implementation of checking URLs against ad-blocker lists (that was slow and broken as of dec.2024) 
+with the `braveblock` library written in rust that utilizes EasyList and EasyPrivacy as the blocklists.
+  - Added multiprocessing to graph building and feature extraction. Use flag `--threads [int]` to set the number of 
+parallel threads to use.
+  - Fixed a handful on minor bugs that caused some graph builds and feature extractions to fail.
+- Machine Learning (`classification/classify.py`)
+  - Added optional SMOTE upsampling for minority class. Use flag `--resample` to include upsampling.
+  - Fixed bug with boolean command line flags always evaluating to True. New usage example for boolean flags: instead of 
+`--save True` use `--save` for True and remove flag for False. 
+
+### Notes on WebGraph installation
+Installing the dependencies in `requirements.txt` will fail with newer versions of python. Our investigation showed that the
+most up-to-date version that WebGraph works with is `python 3.9`. 
+
 #### Installing old python
 ```
 sudo apt update
@@ -9,32 +28,17 @@ sudo add-apt-repository ppa:deadsnakes/ppa
 sudo apt install python3.9 python3.9-dev python3.9-venv
 ```
 
-
-#### Error about no file features.yaml
-The step “1. Graph preprocessing and Feature Building” in the README needs to be run from the WebGraph/code/ directory since there are some file reads with relative paths that will error if code is ran from a different directory.
-
-
-#### Running with leveldb
-
+#### Running WebGraph
+The newer versions of OpenWPM will produce a SQLite file that is named `crawl-data.sqlite` instead of `crawl-db.sqlite`.
+When using newer versions of OpenWPM the usage of WebGraph `run.py` is as follows:
 ```
 python3 ~/WebGraph/code/run.py --input-db ~/datadir/crawl-data.sqlite --ldb ~/datadir/content.ldb --mode webgraph
 ```
 
-#### Migrating sqlite to postgresql
-Contents of `db.load` file
-```
-load database
-     from sqlite:///var/lib/postgresql/data/datadir-100/crawl-data.sqlite
-     into pgsql://postgres@localhost/webgraph
+#### Error about no file features.yaml
+The `run.py` program to be run from the WebGraph/code/ directory since there are some file reads with relative paths that will error if code is ran from a different directory.
 
-with include drop, create tables, create indexes, reset sequences
-
-CAST type string to text drop typemod;
-```
-
-```
-pgloader db.load
-```
+----
 
 ### Requirements
 
